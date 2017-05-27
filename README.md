@@ -1,2 +1,3 @@
 # MappingBloodBankInfo-using-leaflet
-Mapping locations of Blood Banks in Pune city using leaflet
+
+This projects takes publicly available data from https://data.gov.in/ (An open data sharing portal by Goverment of India under Digital India initiative) to extract available blood banks information in Pune city and show the blood bank locations on Pune city map. We also cluster the blood banks so that areas where maximum blood banks are located can be seen. Since the geo location details are not available in the blood bank data set we will use googlemaps API to extract latitude longitude based on address details (in the process we will do some interesting data wrangling!!)

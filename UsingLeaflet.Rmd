@@ -1,0 +1,148 @@
+---
+title: "Blood Bank Mapping In Pune City"
+author: "Shashank Sane"
+date: "May 25, 2017"
+output: html_document
+---
+
+
+## Synopsis
+
+This projects takes publicly available data from https://data.gov.in/ (An open data sharing portal by Goverment of India under Digital India initiative) to extract available blood banks information in Pune city and show the blood bank locations on Pune city map. We also cluster the blood banks so that areas where maximum blood banks are located can be seen. Since the geo location details are not available in the blood bank data set we will use googlemaps API to extract latitude longitude based on address details (in the process we will do some interesting data wrangling!!)
+
+
+###
+load the required libraries
+```{r chunk1,message=FALSE}
+library(plyr)
+library(dplyr)
+library(leaflet)
+library(XML)
+```
+
+
+###
+load data files
+```{r chunk10}
+
+## url of the file
+## using blood bank data from nationl health portal https://data.gov.in/catalog/blood-bank-directory-national-health-portal
+fileURL <- "https://data.gov.in/node/356981/datastore/export/csv"
+
+## Destination file name
+DestinationFile <- "data.csv"
+
+## Download file if does not exist in workspace
+if (!file.exists(DestinationFile)){
+  download.file(fileURL, DestinationFile)
+}
+
+## read file into data frame
+dfBloodBank <- read.csv("Data.csv",header = TRUE,stringsAsFactors = FALSE,na.strings = "NA")
+
+```
+
+##
+Data cleaning,
+we will extract the location information from data set using googlemaps API.
+```{r chunk20}
+
+# lets take subset consisting of Pune City:
+dfPune <- subset(dfBloodBank,city=="Pune")
+
+# as the latitude and longitude is not available in data set we would be using googlemaps api to extract latitude and longitude information based on address details
+# Function to get the latitude and longitude from google maps api.
+latlong <- function(place)
+{
+  theURL <- sprintf('http://maps.google.com/maps/api/geocode/xml?sensor=false&address=%s', place)
+  
+  doc <- xmlToList(theURL)
+  if (length(doc$result$geometry$location$lat)>0)
+  data.frame(address=place, 
+             Latitude=as.numeric(doc$result$geometry$location$lat), 
+             Longitude=as.numeric(doc$result$geometry$location$lng), 
+             stringsAsFactors=FALSE)
+}
+
+# use the adply function in R to apply latlong function created above tp address list 
+# and return a dataframe containing address , latitude and longitude.
+places <- adply(dfPune$address,1,latlong)
+
+# we will now merge our places data frame with original dfPune using address column
+dfPune <- join(dfPune,places,by="address",type="left",match="first")
+
+# check out the places for which match not found
+dfPlacesNoMatch <- dfPune[is.na(dfPune$Latitude),]
+
+## we will now try to search againg for places for which no match is found based on the h_name 
+## column which contains place name, since h_name does no have Pune added in the name
+## we will also added pune to h_name so that googlemaps is able to find location.
+dfPlacesNoMatch <- mutate(dfPlacesNoMatch,h_name= paste(h_name,",Pune"))
+
+# Now try search based on h_name and store the results in new data frame - placesnoMatch
+placesnoMatch <- adply(dfPlacesNoMatch$h_name,1,latlong)
+
+# remove Latitude Longitude columns from the original data set.
+dfPlacesNoMatch <- subset(dfPlacesNoMatch,select = -c(Latitude,Longitude))
+
+# merge the two data frames to get combinde data frame with latitude longitude info.
+dfPlacesNoMatch <- merge(dfPlacesNoMatch,placesnoMatch,by.x = "h_name",by.y = "address",all = FALSE)
+
+# merge back with the original dataset containing entire info.
+dfPune <- merge(dfPune,dfPlacesNoMatch,by.x = "id",by.y = "id",all.x =TRUE,all = FALSE)
+
+## Note that the merging of the data frames has resulted in two sets of latitude and
+## and longitude columns x (for original data set) and y ( for dfPlacesNoMatch dataset)
+## we will now update all such case where latitude and longitude was not available in the 
+## original data set but was obtained in dfPlacesNoMatch using h_name column.
+dfPune$Latitude.x <- ifelse(is.na(dfPune$Latitude.x),dfPune$Latitude.y,dfPune$Latitude.x)
+dfPune$Longitude.x <- ifelse(is.na(dfPune$Longitude.x),dfPune$Longitude.y,dfPune$Longitude.x)
+
+# finally remove the additional columns for latitude longitude 
+# and rename the columns by removing .x in suffix.
+dfPune <- subset(dfPune,select=-c(Latitude.y,Longitude.y))
+dfPune <- rename(dfPune,Latitude=Latitude.x,Longitude=Longitude.x)
+
+## view how the data set now looks
+View(head(dfPune))
+
+table(is.na(dfPune$Latitude))
+
+```
+
+##
+Finally we use the leaflet package to map out the blood bank 
+information.
+```{r chunk30,fig.cap="Blood Banks in Pune City"}
+# take a subset where latitude and longitude is available
+dfPuneSub <- dfPune[!is.na(dfPune$Latitude),]
+
+# we know that the latitude for Pune City should be between 18-19, 
+# we also remove any value where the latitude is way off and does not match Pune city.
+dfPuneSub <- dfPuneSub[dfPuneSub$Latitude < 19,]
+
+# create latitude and longitude data frame for blood banks in Pune
+BloodBankLatLong <- data.frame(lat=dfPuneSub$Latitude,lng=dfPuneSub$Longitude)
+
+# create vector with blood bank addresses.
+BloodBankAddress <- as.vector(dfPuneSub$address.x)
+
+
+# Create blood Bank icon:
+BloodBankIcon <- makeIcon(iconUrl = "E:\\DataScience\\9DevelopingDataProducts\\BloodBankIcon.jpg",
+iconWidth = 31*118/230,iconHeight = 25,
+iconAnchorX = 31*215/230/2,iconAnchorY = 16
+                          )
+#  Finally pass the geo info to leaflet package
+#  addTiles to lay map
+#  Add markers to pass address and icon details.
+#  Also, use clusteroptions to show clusters
+BloodBankLatLong%>%
+  leaflet()%>%
+  addTiles()%>%
+  addMarkers(icon=BloodBankIcon,popup= BloodBankAddress,clusterOptions=markerClusterOptions())
+
+
+```
+###
+The above was a basic demo of using leaflet package to create useful mapping information.
